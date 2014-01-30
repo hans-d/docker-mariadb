@@ -1,0 +1,77 @@
+#!/bin/sh
+
+set -eu
+
+status () {
+  echo "---> ${@}" >&2
+}
+
+if [ -z "$MARIADB_ROOT_PW" ]; then
+    echo "Please provide root password via -e MARIADB_ROOT_PW"
+    exit 1
+fi
+
+
+MSA=/usr/bin/mysqladmin
+
+status "Starting MariaDB server to secure it"
+/usr/bin/mysqld_safe &
+sleep 5
+
+port_open=0
+while [ "$port_open" -eq 0 ]; do
+   /bin/nc -z -w 5 127.0.0.1 3306
+   if [ $? -ne 0 ]; then
+       status "Sleeping waiting for port 3306 to open: result " $? 
+       sleep 1
+   else
+       status "Port 3306 is open"
+       port_open=1
+   fi
+done
+
+status "Set root password"
+done=0
+count=0
+maxtries=10
+while [ $done -eq 0 ]; do
+    ${MSA} -u root password ${MARIADB_ROOT_PW}
+    if [ $? -ne 0 ]; then
+        count=$((${count} + 1))
+        if [ $count -gt $maxtries ]; then
+            status "Maximum tries at setting password exceeded. Giving up"
+            exit 1
+        else
+            status "Root password set failed. Sleeping, then retrying"
+            sleep 1
+        fi
+    else
+        status "Root Password set successfully"
+        done=1
+    fi
+done
+
+status "Securing database"
+
+status "..Dropping test DB"
+DROP="DROP DATABASE IF EXISTS test"
+echo "$DROP" | mysql -u root --password="$MARIADB_ROOT_PW" mysql
+
+status "..Cleaning test db privs"
+DELETE="DELETE FROM mysql.db Where Db='test' OR Db='test\\_%'"
+echo "$DELETE" | mysql -u root --password="$MARIADB_ROOT_PW" mysql
+
+status "..Deleting anon db users"
+DELETE="DELETE FROM mysql.user WHERE User=''"
+echo "$DELETE" | mysql -u root --password="$MARIADB_ROOT_PW" mysql
+
+status "Grant access to off-container connections"
+GRANT="GRANT ALL ON *.* to root@'%' IDENTIFIED BY '${MARIADB_ROOT_PW}'"
+echo "$GRANT" | mysql -u root --password="$MARIADB_ROOT_PW" mysql
+
+status "Make sure updated privileges are used"
+echo "FLUSH PRIVILEGES" | mysql -u root --password="$MARIADB_ROOT_PW" mysql
+
+status "Shutting down MariaDB server"
+${MSA} -uroot -p${MARIADB_ROOT_PW} shutdown
+status "MariaDB installation secured with root password" >&2

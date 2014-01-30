@@ -1,0 +1,27 @@
+#!/bin/bash
+
+status () {
+    echo "---> ${@}" >&2
+}
+
+status "Make sure ownership of data dir is OK"
+chown -R mysql:mysql /var/lib/mysql
+
+if [ ! -e /var/lib/mysql/bootstrapped ]; then
+    status "Bootstrapping MariaDB installation..."
+
+    status "Initializing"
+    mysql_install_db
+
+    status "Secure install"
+    /docker/scripts/mariadb-secure
+
+    if [ $? -ne 0 ]; then
+       status "Failed to secure install"
+       exit 1
+    fi
+    touch /var/lib/mysql/bootstrapped
+else
+    status "Starting from already-bootstrapped MariaDB installation"
+fi
+exec /usr/bin/mysqld_safe --log-error=/var/lib/mysql/mysql.error.log --port 3306 --socket=/var/lib/mysql/mysqld.sock
